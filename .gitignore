@@ -1,0 +1,12 @@
+# Generated agent files: sync_agents.py --git track|ignore manages this for you.
+# (Manual alternative below; do not combine with --git ignore.)
+
+# Ignore whole folders manually (hides hand-written agents too). Uncomment:
+# .claude/agents/
+# .github/agents/
+# .opencode/agents/
+# .agents/skills/
+
+# Python
+__pycache__/
+*.pyc

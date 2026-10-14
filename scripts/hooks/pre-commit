@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Install with: cp scripts/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# Use only if you COMMIT the generated files (Option B in .gitignore).
+python scripts/sync_agents.py && git add .claude/agents .github/agents .opencode/agents .agents/skills
