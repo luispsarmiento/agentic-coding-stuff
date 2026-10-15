@@ -1,15 +1,41 @@
-# Agents Sync Kit
+# Agentic Coding Stuff
 
 Write each agent once in `agents-src/`, then generate files for Claude Code,
 GitHub Copilot, OpenCode and Antigravity (skill fallback).
 
+## Prerequisites
+To use all this stuff, make sure you have:
+- Python v3.15+
+- Node JS v22.20+
+
+## Setup
+
+    npx degit luispsarmiento/agentic-coding-stuff/agents-src .agents/agents-src
+    npx degit luispsarmiento/agentic-coding-stuff/scripts .agents/scripts
+    python .agents/scripts/sync_agents.py -t opencode -s .agents/agents-src -o ./
+
 ## Usage
 
-    python scripts/sync_agents.py                  # all targets
+    python scripts/sync_agents.py                  # asks which subagent(s), all targets
+    python scripts/sync_agents.py --all            # all subagents, no prompt
     python scripts/sync_agents.py -t claude opencode
     python scripts/sync_agents.py -t copilot -n    # dry run
     python scripts/sync_agents.py -t claude -o ~   # user-level (~/.claude/agents)
-    make sync
+    make sync                                      # == --all (non-interactive)
+    make sync-select                               # == --select (interactive)
+
+## Selecting agents
+
+By default the script asks which subagent(s) to sync (interactive picker, same idea
+as the skills package). In a non-interactive context (CI, `make sync`, pipes) it
+falls back to syncing all of them.
+
+    python scripts/sync_agents.py --all                                # everything, no prompt
+    python scripts/sync_agents.py --agents code-reviewer test-writer   # by name, no prompt
+    python scripts/sync_agents.py --select                             # force the picker
+
+The picker accepts `a` (all), indexes (`1`, `1,3`), ranges (`1-3`) or names.
+`--all`, `--agents` and `--select` are mutually exclusive.
 
 ## Git handling of generated files
 

@@ -1,5 +1,8 @@
 sync:
-	python scripts/sync_agents.py
+	python scripts/sync_agents.py --all
+
+sync-select:
+	python scripts/sync_agents.py --select
 
 sync-claude:
 	python scripts/sync_agents.py -t claude
@@ -16,4 +19,4 @@ sync-dry:
 clean:
 	rm -rf .claude/agents .github/agents .opencode/agents .agents/skills
 
-.PHONY: sync sync-claude sync-track sync-ignore sync-dry clean
+.PHONY: sync sync-select sync-claude sync-track sync-ignore sync-dry clean

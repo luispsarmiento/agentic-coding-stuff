@@ -202,6 +202,52 @@ def apply_git(mode: str, scope: str, generated, root: Path, dry: bool):
 
 
 # --------------------------------------------------------------------------- #
+def parse_selection(choice: str, all_files):
+    """Turn 'a', '1,3', '1-3' or agent names into a list of source files."""
+    if not choice or choice == "a":
+        return list(all_files)
+    stems = [f.stem for f in all_files]
+    picked = []
+    for part in choice.replace(" ", "").split(","):
+        if not part:
+            continue
+        if part in stems:
+            picked.extend(f for f in all_files if f.stem == part)
+        elif part.isdigit():
+            idx = int(part) - 1
+            if 0 <= idx < len(all_files):
+                picked.append(all_files[idx])
+        elif "-" in part:
+            try:
+                start, end = (int(x) for x in part.split("-", 1))
+            except ValueError:
+                continue
+            for idx in range(max(0, start - 1), min(len(all_files), end)):
+                picked.append(all_files[idx])
+    return sorted(set(picked))
+
+
+def select_agents(all_files):
+    """Interactively ask whether to sync all subagents or just some."""
+    if not sys.stdin.isatty():
+        print("[select] not interactive; syncing all subagents (use --agents to pick)")
+        return list(all_files)
+    print("\nSelect subagent(s) to sync (similar to skills package):")
+    print("  [a] all subagents")
+    for i, f in enumerate(all_files, 1):
+        print(f"  [{i}] {f.stem}")
+    try:
+        choice = input("\nEnter choice (a, 1, 1,3, 1-3 or a name) [a]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[select] no input; syncing all subagents")
+        return list(all_files)
+    files = parse_selection(choice, all_files)
+    if not files:
+        sys.exit("error: no subagents selected")
+    return files
+
+
+# --------------------------------------------------------------------------- #
 def main():
     p = argparse.ArgumentParser(description="Sync agent definitions to multiple tools.")
     p.add_argument("-t", "--target", nargs="+", default=["all"],
@@ -214,13 +260,32 @@ def main():
                         "else ask (interactive) or skip (non-interactive)")
     p.add_argument("--scope", choices=["local", "shared"], default=None,
                    help="with --git ignore: local=.git/info/exclude, shared=.gitignore (default: local)")
+    pick = p.add_mutually_exclusive_group()
+    pick.add_argument("--agents", nargs="+", metavar="NAME",
+                      help="sync only these subagents by name (non-interactive)")
+    pick.add_argument("--all", action="store_true",
+                      help="sync every subagent without prompting")
+    pick.add_argument("--select", action="store_true",
+                      help="force the interactive subagent picker "
+                           "(default when no selection flag is given)")
     args = p.parse_args()
 
     targets = list(TARGETS) if "all" in args.target else args.target
     src_dir, out_root = Path(args.src), Path(args.out).expanduser()
-    files = sorted(src_dir.glob("*.md"))
-    if not files:
+    all_files = sorted(src_dir.glob("*.md"))
+    if not all_files:
         sys.exit(f"error: no .md files in {src_dir}")
+
+    # Subagent selection: interactive by default, --all/--agents for scripts.
+    if args.agents:
+        selected = set(args.agents)
+        files = [f for f in all_files if f.stem in selected]
+        if not files:
+            sys.exit(f"error: no matching subagents found from: {', '.join(args.agents)}")
+    elif args.all:
+        files = all_files
+    else:
+        files = select_agents(all_files)
 
     generated = []
     for src in files:
