@@ -62,6 +62,19 @@ MCP_TARGETS = {
     "antigravity": {"path": ".agents/mcp_config.json", "global": ".gemini/config/mcp_config.json"},
 }
 
+# Frontmatter keys each target understands for an agent. Anything else is dropped
+# (with a warning) so a Claude-shaped key cannot make another tool's agent invalid.
+# opencode intentionally omits tools/model: it needs a tools object and a
+# provider/model value, which we do not emit yet.
+FRONTMATTER_KEYS = {
+    "claude":   {"name", "description", "tools", "model", "color"},
+    "copilot":  {"name", "description", "tools", "model", "target",
+                 "argument-hint", "handoffs", "infer", "user-invocable",
+                 "disable-model-invocation"},
+    "opencode": {"name", "description", "mode", "temperature", "permission",
+                 "color", "steps", "variant", "disable", "hidden"},
+}
+
 BEGIN = "# >>> agents-sync (generated files) >>>"
 END = "# <<< agents-sync (generated files) <<<"
 TOOL_BEGIN = "# >>> agents-sync (harness tool folder) >>>"
@@ -103,10 +116,37 @@ def build_meta(meta: dict, target: str) -> dict:
     for k, v in TARGETS[target]["extra"].items():
         out.setdefault(k, v)
     out.pop("scripts", None)      # generator metadata, not an agent field
-    keep = TARGETS[target].get("keep")
-    if keep:
-        out = {k: v for k, v in out.items() if k in keep}
+    allowed = FRONTMATTER_KEYS.get(target)
+    if allowed is not None:
+        dropped = [k for k in out if k not in allowed]
+        for k in dropped:
+            print(f"[{target}] WARNING: dropping field '{k}' "
+                  f"(not supported by this target)")
+        out = {k: v for k, v in out.items() if k in allowed}
     return out
+
+
+def dropped_fields(meta: dict, target: str):
+    """Keys build_meta would drop for a target (for doctor/inspection)."""
+    allowed = FRONTMATTER_KEYS.get(target)
+    if allowed is None:
+        return []
+    tmp = {}
+    for key, value in meta.items():
+        if "." in key:
+            prefix, real_key = key.split(".", 1)
+            if prefix == target:
+                tmp[real_key] = value
+            elif prefix in ALL_TARGETS:
+                continue
+            else:
+                tmp[key] = value
+        else:
+            tmp.setdefault(key, value)
+    for k, v in TARGETS[target]["extra"].items():
+        tmp.setdefault(k, v)
+    tmp.pop("scripts", None)
+    return [k for k in tmp if k not in allowed]
 
 
 def parse_scripts(value: str):
@@ -407,6 +447,10 @@ def doctor(src_root: Path, scripts_src: Path):
         for sname in declared_scripts(meta):
             if not (a.scripts_dir / sname).is_file() and not (scripts_src / sname).is_file():
                 issues.append(f"{a.id}: script not found: {sname}")
+        for t in ALL_TARGETS:
+            for k in dropped_fields(meta, t):
+                issues.append(f"{a.id}: field '{k}' not supported by '{t}' "
+                              f"(will be dropped)")
 
     seen_skills = set()
     for s in skills:

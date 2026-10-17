@@ -88,7 +88,7 @@ to `.agents/.backups/<ts>/` before overwriting:
     python harness.py install <source> [--ref vX] [--where ...] [-t ...]
     python harness.py update [--ref vX]     # re-fetch recorded source + materialize
     python harness.py uninstall [--purge]   # remove generated files + ignore rules
-    python harness.py migrate      # agents-src/*.md -> .agents/agents/<id>/agent.md
+    python harness.py migrate      # a legacy flat dir of *.md -> .agents/agents/<id>/agent.md
     python harness.py sync --all   # materialize .agents/ to every target, no prompt
     python harness.py sync -t claude opencode
     python harness.py sync -t copilot -n    # dry run
@@ -191,6 +191,21 @@ tool folder is excluded (or not). It is never the project root itself.
     System prompt in Markdown...
 
 Keys without a prefix go to every target. OpenCode automatically gets `mode: subagent`.
+
+Each target only accepts certain frontmatter fields, so a field that another tool
+would reject is **dropped with a warning** (and flagged by `harness doctor`). In
+particular, OpenCode needs `tools` as an object and `model` as `provider/model`, so
+we do not emit `tools`/`model` for OpenCode yet — use prefixed keys:
+
+| Key | claude | copilot | opencode |
+|-----|--------|---------|----------|
+| `name`, `description` | ✓ | ✓ | ✓ |
+| `tools` / `model` | ✓ | ✓ | — (dropped) |
+| `target`, `handoffs`, `argument-hint`, `infer` | — | ✓ | — |
+| `mode`, `temperature`, `permission`, `color`, `steps`, `variant` | — | — | ✓ |
+
+Keys are written to every target unless prefixed with `<target>.` (e.g.
+`claude.tools`, `copilot.tools`, `opencode.permission`).
 
 Agent targets are Claude Code, Copilot and OpenCode (they support sub-agents).
 Antigravity is a **skills-only** target (see below).

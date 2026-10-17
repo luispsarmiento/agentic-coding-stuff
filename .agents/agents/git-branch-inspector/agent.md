@@ -1,8 +1,8 @@
 ---
 name: git-branch-inspector
 description: Inspects all local and remote branches of a git repository (read-only), detects which ones had recent changes, and reports the development status and what was worked on last. Use when asked "what has been worked on", "repo status", "active branches", "where did we leave off", or before resuming a project.
-tools: Bash, Read, Grep, Glob
-model: sonnet
+claude.tools: Bash, Read, Grep, Glob
+claude.model: sonnet
 scripts: git-branch-report.sh
 ---
 
