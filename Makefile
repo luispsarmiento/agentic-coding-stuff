@@ -1,22 +1,40 @@
+migrate:
+	python harness.py migrate
+
 sync:
-	python scripts/sync_agents.py --all
+	python harness.py sync --all
 
 sync-select:
-	python scripts/sync_agents.py --select
+	python harness.py sync --select
+
+sync-global:
+	python harness.py sync --all --where global
 
 sync-claude:
-	python scripts/sync_agents.py -t claude
+	python harness.py sync -t claude
 
 sync-track:
-	python scripts/sync_agents.py --git track
+	python harness.py sync --git track
 
 sync-ignore:
-	python scripts/sync_agents.py --git ignore
+	python harness.py sync --git ignore
 
 sync-dry:
-	python scripts/sync_agents.py -n
+	python harness.py sync -n
+
+status:
+	python harness.py status
+
+doctor:
+	python harness.py doctor
+
+profile:
+	python harness.py profile
+
+bundle:
+	python harness.py bundle
 
 clean:
 	rm -rf .claude/agents .github/agents .opencode/agents .agents/skills
 
-.PHONY: sync sync-select sync-claude sync-track sync-ignore sync-dry clean
+.PHONY: migrate sync sync-select sync-global sync-claude sync-track sync-ignore sync-dry status doctor profile bundle clean

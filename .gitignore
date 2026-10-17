@@ -7,6 +7,14 @@
 # .opencode/agents/
 # .agents/skills/
 
+# Machine-local harness state (not the canonical content; keep .lock.json if you
+# want to pin what was generated).
+.agents/.sync.json
+.agents/.backups/
+
+# Harness bundles (build artifacts)
+*.dotagents
+
 # Python
 __pycache__/
 *.pyc
