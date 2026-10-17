@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# Launcher so `harness` can be run from anywhere.
+# Add this `bin/` directory to your PATH (and `chmod +x bin/harness` on Unix).
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+exec python3 "$ROOT/harness.py" "$@"

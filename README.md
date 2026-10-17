@@ -28,6 +28,29 @@ Clone or degit the repo, then materialize the harness for a tool:
 and, by default, adds `harness/` to `.git/info/exclude` so the tool folder does not
 dirty your project. Pass `--harness-ignore track` to version it instead.
 
+## Use it as a command (PATH)
+
+Keep one copy of the tool (instead of `degit`-ing it per project) and run `harness`
+from anywhere. The launchers live in `bin/`:
+
+- Windows: add this repo's `bin\` to your PATH (it contains `harness.cmd`).
+
+      setx PATH "%PATH%;C:\path\to\agentic-coding-stuff\bin"
+
+- Unix: add `bin/` to PATH and make the launcher executable.
+
+      chmod +x bin/harness
+      export PATH="$PWD/bin:$PATH"   # add to ~/.bashrc / ~/.zshrc
+
+Then:
+
+    harness sync --all          # materialize the tool's .agents/ into the current project
+    harness sync --where global # install user-wide (all projects)
+    harness doctor
+
+Because the tool is installed once, its `.agents/` is the canonical harness for every
+project — you update it in one place instead of per repo.
+
 ## Profiles
 
 A profile selects a subset of the harness. Drop `<name>.json` in `.agents/profiles/`:

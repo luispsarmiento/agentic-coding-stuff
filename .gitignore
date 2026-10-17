@@ -11,6 +11,7 @@
 # want to pin what was generated).
 .agents/.sync.json
 .agents/.backups/
+.agents/.lock.json
 
 # Harness bundles (build artifacts)
 *.dotagents
