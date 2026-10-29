@@ -70,6 +70,41 @@ def install_base(where, out):
     return outp.resolve()
 
 
+def ensure_project_scaffold(base: Path):
+    agents_root = base / ".agents"
+    created = []
+    for name in ("agents", "memories", "skills"):
+        directory = agents_root / name
+        directory.mkdir(parents=True, exist_ok=True)
+        marker = directory / ".gitkeep"
+        if not any(directory.iterdir()):
+            marker.touch(exist_ok=True)
+            created.append(marker)
+
+    starter_files = {
+        "agents.md": "# Project Agent Instructions\n\n"
+                     "Add project-specific guidance for your coding agents here.\n",
+        "mcp.json": '{\n  "mcpServers": {}\n}\n',
+    }
+    for name, content in starter_files.items():
+        path = agents_root / name
+        try:
+            with path.open("x", encoding="utf-8") as starter:
+                starter.write(content)
+        except FileExistsError:
+            continue
+        created.append(path)
+    return created
+
+
+def scaffold_project(where, base):
+    if where not in ("project", "root"):
+        return
+    created = ensure_project_scaffold(base)
+    if created:
+        print(f"[scaffold] initialized {base / '.agents'}")
+
+
 def parse_source(source):
     s = source.rstrip("/")
     m = re.match(r"^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?$", s)
@@ -239,6 +274,8 @@ def cmd_sync(argv):
     src = Path(peek_flag(argv, ["-s", "--src"], str(ROOT / ".agents")))
     rc = sync_agents.run(argv)
     lock = sync_agents.load_lock(src)
+    if not is_dry(argv):
+        scaffold_project(lock.get("where"), install_base(lock.get("where"), lock.get("out", ".")))
     if lock.get("where") in ("project", "root") and not is_dry(argv):
         handle_tool_ignore(lock["where"], lock.get("out", "."), harness_ignore, False)
     return rc
@@ -263,6 +300,7 @@ def cmd_install(args):
 
     rc = sync_agents.run(sync_argv(dest_canon, args))
     if not args.dry_run:
+        scaffold_project(where, base)
         sync_agents.set_lock_provenance(dest_canon, args.source, args.ref, args.path)
         handle_tool_ignore(where, args.out, args.harness_ignore, False)
     return rc
@@ -309,6 +347,7 @@ def cmd_update(args):
 
     rc = sync_agents.run(sync_argv(canon, args))
     if not args.dry_run:
+        scaffold_project(where, base)
         sync_agents.set_lock_provenance(canon, source, ref, path)
         new = sync_agents.load_lock(canon)
         oldset = {sync_agents.lock_base(old) / f["path"] for f in old.get("files", [])}

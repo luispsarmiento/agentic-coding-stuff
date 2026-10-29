@@ -28,6 +28,13 @@ Clone or degit the repo, then materialize the harness for a tool:
 and, by default, adds `harness/` to `.git/info/exclude` so the tool folder does not
 dirty your project. Pass `--harness-ignore track` to version it instead.
 
+For project and repository-root installs, the first real `sync` also creates a
+starter `.agents/` workspace with `agents/`, `memories/`, and `skills/` directories,
+plus `agents.md` and an empty `mcp.json`. Existing files are left untouched. This
+workspace is for project-specific content; the normal sync source remains the
+harness's own `.agents/` unless you explicitly pass `-s .agents`. Global installs
+do not create a project scaffold.
+
 ## Use it as a command (PATH)
 
 Keep one copy of the tool (instead of `degit`-ing it per project) and run `harness`
