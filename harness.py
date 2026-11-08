@@ -17,10 +17,12 @@ Run:  python harness.py <command> [options]
 """
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -104,6 +106,147 @@ def scaffold_project(where, base):
     if created:
         print(f"[scaffold] initialized {base / '.agents'}")
 
+
+def memory_root() -> Path:
+    env = os.environ.get("AGENT_MEMORY_ROOT")
+    if env:
+        return Path(env).expanduser()
+    # honor .agent-profile.json override if present in CWD
+    profile = Path.cwd() / ".agent-profile.json"
+    try:
+        data = json.loads(profile.read_text(encoding="utf-8"))
+        if data.get("memory_root"):
+            return Path(data["memory_root"]).expanduser()
+    except (OSError, ValueError):
+        pass
+    return Path.home() / "agent-memory"
+
+
+def project_id_for(repo: Path) -> str:
+    repo = repo.resolve()
+    pid = None
+    # try git remote origin
+    try:
+        code, out = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=repo, capture_output=True, text=True).returncode, None
+    except Exception:
+        code = 1
+        out = None
+    if code == 0:
+        try:
+            r = subprocess.run(["git", "remote", "get-url", "origin"],
+                               cwd=repo, capture_output=True, text=True)
+            url = r.stdout.strip()
+            if url:
+                slug = re.sub(r"[^a-zA-Z0-9]+", "-", url).strip("-").lower()
+                # drop common host prefixes
+                slug = slug.replace("https-github-com-", "").replace("git-github-com-", "")
+                pid = slug[:60] or None
+        except Exception:
+            pid = None
+    if not pid:
+        h = hashlib.sha256(str(repo).encode("utf-8")).hexdigest()[:8]
+        pid = f"{repo.name}-{h}"
+    # sanitize
+    pid = re.sub(r"[^a-zA-Z0-9._-]+", "-", pid).strip("-")
+    return pid or f"project-{hashlib.sha256(str(repo).encode()).hexdigest()[:8]}"
+
+
+def ensure_memory_layout(mem_root: Path, project_id: str) -> Path:
+    base = mem_root / project_id
+    for sub in ("graph", "notes", "specs"):
+        (base / sub).mkdir(parents=True, exist_ok=True)
+    (mem_root / "_global" / "lessons").mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def agent_profile_path(repo: Path) -> Path:
+    return repo / ".agent-profile.json"
+
+
+def read_agent_profile(repo: Path) -> dict:
+    p = agent_profile_path(repo)
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def write_agent_profile(repo: Path, project_id: str, mem_root: Path) -> Path:
+    p = agent_profile_path(repo)
+    data = {
+        "schema": 1,
+        "project_id": project_id,
+        "memory_root": None,
+    }
+    # store override only if non-default? keep null for default
+    p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return p
+
+
+def project_json_path(mem_base: Path) -> Path:
+    return mem_base / "project.json"
+
+
+def write_project_json(mem_base: Path, repo: Path) -> Path:
+    p = project_json_path(mem_base)
+    data = {
+        "repo_path": str(repo.resolve()),
+        "created_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat(),
+    }
+    p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return p
+
+
+MANAGED_BEGIN = "<!-- >>> agent-memory (managed) >>> -->"
+MANAGED_END = "<!-- <<< agent-memory (managed) <<< -->"
+
+
+def append_managed_block(agents_md: Path):
+    block = (
+        MANAGED_BEGIN + "\n"
+        "## Project memory (user data)\n"
+        "- Before changing code, search memory with the `memory` MCP tools "
+        "(`memory_search`, `graph_query`) for relevant decisions, lessons, and structure.\n"
+        "- After a non-trivial decision or lesson, save it with `memory_save` "
+        "(or write to `~/agent-memory/<project-id>/notes/`).\n"
+        "- If the memory server is unavailable, continue normally; memory is advisory.\n"
+        "- Specs live in `~/agent-memory/<project-id>/specs/` unless committed to the repo for teammates/CI.\n"
+        "- Don't create memory files in the project directory; use the designated memory locations.\n"
+        + MANAGED_END + "\n"
+    )
+    text = agents_md.read_text(encoding="utf-8") if agents_md.is_file() else ""
+    if MANAGED_BEGIN in text:
+        # replace existing block
+        import re as _re
+        pattern = _re.compile(re.escape(MANAGED_BEGIN) + r".*?" + re.escape(MANAGED_END) + r"\n?", _re.S)
+        new = pattern.sub(block, text)
+        if new == text:
+            return False
+        agents_md.write_text(new, encoding="utf-8")
+        return True
+    sep = "" if not text or text.endswith("\n") else "\n"
+    agents_md.write_text(text + sep + "\n" + block, encoding="utf-8")
+    return True
+
+
+def add_memory_mcp_entry(canon: Path, mem_root: Path, project_id: str):
+    mcp_path = canon / "mcp.json"
+    try:
+        data = json.loads(mcp_path.read_text(encoding="utf-8")) if mcp_path.is_file() else {"mcpServers": {}}
+    except (OSError, ValueError):
+        data = {"mcpServers": {}}
+    if "mcpServers" not in data or not isinstance(data["mcpServers"], dict):
+        data["mcpServers"] = {}
+    server_py = mem_root / "server.py"
+    data["mcpServers"]["memory"] = {
+        "command": "python",
+        "args": [str(server_py), "--root", str(mem_root), "--project", project_id],
+    }
+    mcp_path.parent.mkdir(parents=True, exist_ok=True)
+    mcp_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return mcp_path
 
 def parse_source(source):
     s = source.rstrip("/")
@@ -247,8 +390,9 @@ def cmd_sync(argv):
     if argv and argv[0] == "--":
         argv = argv[1:]
 
-    # our own flag; not understood by the sync engine
+    # our own flags; not understood by the sync engine
     harness_ignore = "local"
+    with_memory = False
     rest = []
     i = 0
     while i < len(argv):
@@ -259,6 +403,10 @@ def cmd_sync(argv):
             continue
         if a.startswith("--harness-ignore="):
             harness_ignore = a.split("=", 1)[1]
+            i += 1
+            continue
+        if a == "--with-memory":
+            with_memory = True
             i += 1
             continue
         rest.append(a)
@@ -278,6 +426,12 @@ def cmd_sync(argv):
         scaffold_project(lock.get("where"), install_base(lock.get("where"), lock.get("out", ".")))
     if lock.get("where") in ("project", "root") and not is_dry(argv):
         handle_tool_ignore(lock["where"], lock.get("out", "."), harness_ignore, False)
+        base = install_base(lock["where"], lock.get("out", "."))
+        print("[hint] Optional: store this project's graph/notes in user data: "
+              "run `harness memory init` (or re-run sync with --with-memory). "
+              "The graph-init subagent is also available for in-repo graphs.")
+        if with_memory:
+            memory_init(base, None, False, False, True, False, False, False)
     return rc
 
 
@@ -303,6 +457,13 @@ def cmd_install(args):
         scaffold_project(where, base)
         sync_agents.set_lock_provenance(dest_canon, args.source, args.ref, args.path)
         handle_tool_ignore(where, args.out, args.harness_ignore, False)
+        if where in ("project", "root"):
+            print("[hint] Optional: store this project's graph/notes in user data: "
+                  "run `harness memory init` (or re-run install with --with-memory). "
+                  "The graph-init subagent is also available for in-repo graphs.")
+            if getattr(args, "with_memory", False):
+                memory_init(base, None, False, getattr(args, "no_mcp", False),
+                            True, False, False, False)
     return rc
 
 
@@ -357,6 +518,12 @@ def cmd_update(args):
             p.unlink()
             print(f"[update] pruned {p}")
         handle_tool_ignore(where, out, args.harness_ignore, False)
+        if where in ("project", "root"):
+            print("[hint] Optional: store this project's graph/notes in user data: "
+                  "run `harness memory init` (or re-run with --with-memory).")
+            if getattr(args, "with_memory", False):
+                memory_init(base, None, False, getattr(args, "no_mcp", False),
+                            True, False, False, False)
     return rc
 
 
@@ -548,8 +715,272 @@ def add_materialize_args(p, include_ref=False, include_source=False):
                    help="do not write AGENTS.md as per-tool instruction files")
     p.add_argument("--no-mcp", action="store_true",
                    help="do not write mcp.json to per-tool MCP configs")
+    p.add_argument("--with-memory", action="store_true",
+                   help="also set up project memory in user data (~/agent-memory)")
     p.add_argument("-n", "--dry-run", action="store_true", help="show what would be done")
     return p
+
+
+def resolve_repo(args):
+    out = getattr(args, "out", None) or "."
+    where = getattr(args, "where", None) or "project"
+    base = install_base(where, out)
+    if where in ("project", "root"):
+        return base
+    return Path.cwd()
+
+
+def memory_init(repo: Path, mem_root_override=None, no_graph=False, no_mcp=False,
+               do_sync=True, dry=False, relocate_codegraph=False, full_graph=False):
+    repo = repo.resolve()
+    # ensure canonical workspace exists
+    scaffold_project("project", repo)
+    profile = read_agent_profile(repo)
+    project_id = profile.get("project_id")
+    if not project_id:
+        project_id = project_id_for(repo)
+    mem_root = Path(mem_root_override).expanduser() if mem_root_override else memory_root()
+    if dry:
+        print(f"[memory] (dry-run) project_id={project_id} root={mem_root}")
+        return project_id
+    # layout
+    mem_base = ensure_memory_layout(mem_root, project_id)
+    write_project_json(mem_base, repo)
+    write_agent_profile(repo, project_id, mem_root)
+    # copy server
+    src_server = ROOT / "scripts" / "agent-memory-server.py"
+    dst_server = mem_root / "server.py"
+    if src_server.is_file():
+        dst_server.write_bytes(src_server.read_bytes())
+        if os.name != "nt":
+            dst_server.chmod(dst_server.stat().st_mode | 0o111)
+        print(f"[memory] server -> {dst_server}")
+    # AGENTS.md managed block
+    agents_md = repo / ".agents" / "AGENTS.md"
+    if not agents_md.is_file():
+        agents_md.parent.mkdir(parents=True, exist_ok=True)
+        agents_md.write_text("# Project Agent Instructions\n\n", encoding="utf-8")
+    changed = append_managed_block(agents_md)
+    print(f"[memory] AGENTS.md managed block {'updated' if changed else 'already present'}")
+    # mcp entry
+    canon = repo / ".agents"
+    if not no_mcp:
+        add_memory_mcp_entry(canon, mem_root, project_id)
+        print(f"[memory] mcp entry -> {canon / 'mcp.json'}")
+    # graph build
+    if not no_graph:
+        graph_dir = mem_base / "graph"
+        # graphify
+        import shutil as _sh
+        if _sh.which("graphify"):
+            env = dict(os.environ)
+            env["GRAPHIFY_OUT"] = str(graph_dir)
+            cmd = ["graphify", "extract", str(repo), "--code-only", "--out", str(graph_dir)]
+            if full_graph:
+                cmd = ["graphify", "extract", str(repo), "--out", str(graph_dir)]
+            print(f"[memory] running: {' '.join(cmd)}")
+            try:
+                subprocess.run(cmd, env=env, check=False)
+            except Exception as e:
+                print(f"[memory] graphify failed: {e}")
+        else:
+            print("[memory] graphify not installed; run manually:")
+            print(f"  GRAPHIFY_OUT={graph_dir} graphify extract {repo} --code-only --out {graph_dir}")
+        # codegraph (in-repo, ignored) + optional symlink
+        if _sh.which("codegraph"):
+            print(f"[memory] running codegraph init in {repo}")
+            try:
+                subprocess.run(["codegraph", "init", str(repo)], check=False)
+            except Exception as e:
+                print(f"[memory] codegraph failed: {e}")
+            if relocate_codegraph:
+                cg = repo / ".codegraph"
+                target = graph_dir / "codegraph"
+                if cg.exists() and not cg.is_symlink():
+                    try:
+                        import shutil as _s
+                        if target.exists():
+                            _s.rmtree(target, ignore_errors=True)
+                        _s.move(str(cg), str(target))
+                        try:
+                            os.symlink(str(target), str(cg), target_is_directory=True)
+                            print(f"[memory] relocated .codegraph -> {target}")
+                        except OSError as e:
+                            print(f"[memory] symlink failed ({e}); .codegraph moved to {target}, restore manually if needed")
+                    except Exception as e:
+                        print(f"[memory] codegraph relocation failed: {e}")
+        else:
+            print("[memory] codegraph not installed; skip")
+    # sync to propagate
+    if do_sync:
+        try:
+            argv = ["-s", str(canon), "--where", "project", "-o", str(repo), "--all"]
+            # avoid interactive prompts
+            import sync_agents as _sa
+            # call run with saved choices? Just run; sync_agents resolves where from config
+            _sa.run(argv)
+        except Exception as e:
+            print(f"[memory] sync failed: {e}")
+    print(f"[memory] done. project_id={project_id} memory={mem_base}")
+    print(f"[memory] backup tip: create a private git repo in {mem_root}")
+    return project_id
+
+
+def cmd_memory(argv):
+    if argv and argv[0] == "--":
+        argv = argv[1:]
+    if not argv:
+        print("usage: harness memory <init|sync|status|hook|backup> [options]")
+        return 2
+    sub = argv[0]
+    rest = argv[1:]
+    if sub == "init":
+        ap = argparse.ArgumentParser(prog="harness memory init")
+        ap.add_argument("--root", default=None, help="override memory root")
+        ap.add_argument("--project-id", default=None, help="override project id")
+        ap.add_argument("--repo", default=".", help="repo root (default .)")
+        ap.add_argument("--no-graph", action="store_true")
+        ap.add_argument("--no-mcp", action="store_true")
+        ap.add_argument("--no-sync", action="store_true")
+        ap.add_argument("--full-graph", action="store_true", help="run full graphify extraction (needs model)")
+        ap.add_argument("--relocate-codegraph", action="store_true")
+        ap.add_argument("-n", "--dry-run", action="store_true")
+        a = ap.parse_args(rest)
+        repo = Path(a.repo).resolve()
+        # honor explicit project id
+        if a.project_id:
+            prof = read_agent_profile(repo)
+            prof["project_id"] = a.project_id
+            agent_profile_path(repo).write_text(json.dumps({**prof, "schema": 1,
+                "project_id": a.project_id, "memory_root": None}, indent=2) + "\n", encoding="utf-8")
+        memory_init(repo, a.root, a.no_graph, a.no_mcp, not a.no_sync, a.dry_run,
+                    a.relocate_codegraph, a.full_graph)
+        return 0
+    if sub in ("sync", "reindex"):
+        ap = argparse.ArgumentParser(prog="harness memory sync")
+        ap.add_argument("--root", default=None)
+        ap.add_argument("--repo", default=".")
+        ap.add_argument("--quiet", action="store_true")
+        a = ap.parse_args(rest)
+        repo = Path(a.repo).resolve()
+        profile = read_agent_profile(repo)
+        pid = profile.get("project_id") or project_id_for(repo)
+        mem_root = Path(a.root).expanduser() if a.root else memory_root()
+        mem_base = mem_root / pid
+        if not a.quiet:
+            print(f"[memory] syncing {pid}")
+        import shutil as _sh
+        graph_dir = mem_base / "graph"
+        if _sh.which("graphify") and graph_dir.parent.is_dir():
+            env = dict(os.environ)
+            env["GRAPHIFY_OUT"] = str(graph_dir)
+            try:
+                subprocess.run(["graphify", "update", str(repo)], env=env, check=False,
+                               stdout=subprocess.DEVNULL if a.quiet else None)
+            except Exception as e:
+                if not a.quiet:
+                    print(f"[memory] graphify update failed: {e}")
+        cg = repo / ".codegraph"
+        if cg.is_dir() and _sh.which("codegraph"):
+            try:
+                subprocess.run(["codegraph", "sync", str(repo)], check=False,
+                               stdout=subprocess.DEVNULL if a.quiet else None)
+            except Exception as e:
+                if not a.quiet:
+                    print(f"[memory] codegraph sync failed: {e}")
+        if not a.quiet:
+            print("[memory] sync done")
+        return 0
+    if sub == "status":
+        ap = argparse.ArgumentParser(prog="harness memory status")
+        ap.add_argument("--repo", default=".")
+        a = ap.parse_args(rest)
+        repo = Path(a.repo).resolve()
+        profile = read_agent_profile(repo)
+        pid = profile.get("project_id")
+        mr = memory_root()
+        print(f"repo:        {repo}")
+        print(f"project_id:  {pid or '(none)'}")
+        print(f"memory_root: {mr}")
+        if pid:
+            base = mr / pid
+            print(f"memory_dir:  {base}")
+            print(f"  graph.json: {'yes' if (base/'graph'/'graph.json').is_file() else 'no'}")
+            print(f"  notes:      {len(list((base/'notes').glob('*'))) if (base/'notes').is_dir() else 0}")
+            print(f"  specs:      {len(list((base/'specs').glob('*'))) if (base/'specs').is_dir() else 0}")
+            print(f"  server.py:  {'yes' if (mr/'server.py').is_file() else 'no'}")
+        print(f".codegraph:   {'yes' if (repo/'.codegraph').is_dir() else 'no'}")
+        return 0
+    if sub == "hook":
+        if not rest or rest[0] not in ("install", "uninstall"):
+            print("usage: harness memory hook install|uninstall")
+            return 2
+        repo = Path(".").resolve()
+        # find git root
+        try:
+            r = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=repo, capture_output=True, text=True)
+            gitdir = Path(r.stdout.strip())
+            if not gitdir.is_absolute():
+                gitdir = repo / gitdir
+        except Exception:
+            gitdir = None
+        if not gitdir or not gitdir.exists():
+            print("[memory] not a git repo; hook skipped")
+            return 1
+        hooks = gitdir / "hooks"
+        hooks.mkdir(parents=True, exist_ok=True)
+        hook = hooks / "post-commit"
+        marker = "# >>> agent-memory sync >>>"
+        end = "# <<< agent-memory sync <<<"
+        block = (marker + "\n"
+                 "harness memory sync --quiet || true\n"
+                 + end + "\n")
+        if rest[0] == "install":
+            text = hook.read_text(encoding="utf-8") if hook.is_file() else "#!/bin/sh\n"
+            if marker in text:
+                print("[memory] hook already installed")
+                return 0
+            if not text.endswith("\n"):
+                text += "\n"
+            text += block
+            hook.write_text(text, encoding="utf-8")
+            if os.name != "nt":
+                hook.chmod(hook.stat().st_mode | 0o111)
+            print(f"[memory] installed post-commit hook: {hook}")
+            return 0
+        else:
+            if not hook.is_file():
+                print("[memory] no hook file")
+                return 0
+            text = hook.read_text(encoding="utf-8")
+            import re as _re
+            text = _re.sub(re.escape(marker) + r".*?" + re.escape(end) + r"\n?", "", text, flags=_re.S)
+            hook.write_text(text, encoding="utf-8")
+            print(f"[memory] removed agent-memory block from {hook}")
+            return 0
+    if sub == "backup":
+        ap = argparse.ArgumentParser(prog="harness memory backup")
+        ap.add_argument("--repo", default=".")
+        a = ap.parse_args(rest)
+        mem = memory_root()
+        mem.mkdir(parents=True, exist_ok=True)
+        gitdir = mem / ".git"
+        if not gitdir.exists():
+            subprocess.run(["git", "init"], cwd=mem, check=False)
+            print(f"[memory] initialized git repo in {mem}")
+        # write a minimal .gitignore? none needed
+        subprocess.run(["git", "add", "-A"], cwd=mem, check=False)
+        r = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=mem)
+        if r.returncode != 0:
+            subprocess.run(["git", "commit", "-m", "backup agent-memory"], cwd=mem, check=False)
+            print("[memory] committed backup")
+        else:
+            print("[memory] nothing to commit")
+        print("[memory] add a private remote for off-machine backup:")
+        print(f"  cd {mem} && git remote add origin <private-repo-url> && git push -u origin main")
+        return 0
+    print(f"unknown memory subcommand: {sub}")
+    return 2
 
 
 def main(argv=None):
@@ -559,6 +990,8 @@ def main(argv=None):
 
     if argv[0] == "sync":
         return cmd_sync(argv[1:])
+    if argv[0] == "memory":
+        return cmd_memory(argv[1:])
 
     p = argparse.ArgumentParser(prog="harness",
                                 description="Manage your .agents/ harness.")

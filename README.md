@@ -339,6 +339,36 @@ global paths live under your home directory.
 Env overrides the tools honor (not set by this script): `CLAUDE_CONFIG_DIR`,
 `COPILOT_HOME`, `OPENCODE_CONFIG_DIR`.
 
+## Project memory (user data)
+
+Optionally store a project's code graph, notes and specs in your user data
+(`~/agent-memory/`) instead of (or in addition to) the repo:
+
+    harness memory init            # scaffold layout, build graph, wire MCP server
+    harness memory sync           # re-index after changes
+    harness memory status         # show paths and what exists
+    harness memory hook install   # re-index on every commit (non-fatal)
+    harness memory backup         # git-commit the memory folder (use a private remote)
+
+Layout:
+
+    ~/agent-memory/
+    ├── <project-id>/
+    │   ├── graph/   # graphify output (graph.json, report, cache)
+    │   ├── notes/   # decisions, lessons
+    │   └── specs/   # specs (keep in repo instead if teammates/CI need them)
+    ├── _global/     # cross-project lessons
+    └── server.py    # stdio MCP server (memory_search, graph_query, spec_get, memory_save)
+
+The repo keeps only `.agent-profile.json` (project id + optional override path);
+nothing sensitive and no generated data goes in the repo. `harness install` and
+`harness sync` print a hint and accept `--with-memory` to run init automatically.
+
+The `graph-init` subagent also supports `--memory` to build into user data.
+
+If the MCP server is unavailable, agents continue normally; memory is advisory.
+Back up `~/agent-memory` separately (a private git repo works well).
+
 ## Notes
 
 - Do not edit generated files; edit `.agents/` and re-run.

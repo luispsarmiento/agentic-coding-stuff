@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-TOOLS="both"; SCOPE="local"; TARGET="."; INSTALL=0; DRY=0
+TOOLS="both"; SCOPE="local"; TARGET="."; INSTALL=0; DRY=0; MEMORY=0; RELOCATE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -24,6 +24,8 @@ while [ $# -gt 0 ]; do
     -s) SCOPE="${2:?missing value for -s}"; shift 2 ;;
     -p) TARGET="${2:?missing value for -p}"; shift 2 ;;
     --install) INSTALL=1; shift ;;
+    --memory|-m) MEMORY=1; shift ;;
+    --relocate-codegraph) RELOCATE=1; shift ;;
     -n) DRY=1; shift ;;
     -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -36,6 +38,19 @@ case "$SCOPE" in local|shared) ;; *) echo "-s must be local|shared" >&2; exit 2 
 say()  { printf '%s\n' "$*"; }
 run()  { if [ "$DRY" -eq 1 ]; then say "  (dry-run) $*"; else "$@"; fi; }
 want() { [ "$TOOLS" = "both" ] || [ "$TOOLS" = "$1" ]; }
+
+# Memory mode: delegate to harness memory init (user-data layout).
+if [ "$MEMORY" -eq 1 ]; then
+  if command -v harness >/dev/null 2>&1; then
+    FLAGS=""
+    [ "$DRY" -eq 1 ] && FLAGS="$FLAGS -n"
+    [ "$RELOCATE" -eq 1 ] && FLAGS="$FLAGS --relocate-codegraph"
+    # shellcheck disable=SC2086
+    exec harness memory init $FLAGS
+  fi
+  echo "harness not on PATH; cannot run memory mode. Install harness or run: python harness.py memory init" >&2
+  exit 2
+fi
 
 cd "$TARGET"
 REPORT=()

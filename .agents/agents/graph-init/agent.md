@@ -1,6 +1,6 @@
 ---
 name: graph-init
-description: Sets up a local code graph (CodeGraph and/or graphify) in the current project by running the graph-init script, which keeps generated index files out of git. Use when the user asks to set up, init or index a code graph or knowledge graph.
+description: Sets up a local code graph (CodeGraph and/or graphify) in the current project, or in user data (~/agent-memory) with --memory, by running the graph-init script, which keeps generated index files out of git. Use when the user asks to set up, init or index a code graph or knowledge graph.
 claude.tools: Read, Bash
 copilot.tools: ['read', 'execute']
 scripts: graph-init.sh
@@ -17,6 +17,8 @@ or run codegraph/graphify commands yourself; the script does that.
    - "shared", "team" or "commit the ignore" -> `-s shared`, otherwise `-s local`
    - another folder mentioned -> `-p <path>`
    - "preview" or "dry run" -> `-n`
+   - "memory", "user data", "global memory" -> `--memory`
+   - "relocate codegraph" -> `--relocate-codegraph`
    - Add `--install` ONLY if the user explicitly allows installing missing tools.
 3. Run it once with the flags and capture the full output.
 4. Exit code 1 means a warning (graph files already tracked by git, or visible in
