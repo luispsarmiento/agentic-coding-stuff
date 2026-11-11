@@ -207,7 +207,7 @@ def append_managed_block(agents_md: Path):
     block = (
         MANAGED_BEGIN + "\n"
         "## Project memory (user data)\n"
-        "- Before changing code, search memory with the `memory` MCP tools "
+        "- Before changing code, planning or knowledge gathering, search memory with the `memory` MCP tools "
         "(`memory_search`, `graph_query`) for relevant decisions, lessons, and structure.\n"
         "- After a non-trivial decision or lesson, save it with `memory_save` "
         "(or write to `~/agent-memory/<project-id>/notes/`).\n"
