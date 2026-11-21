@@ -179,6 +179,18 @@ python agencos.py install ./my-agencos-1.0.0.dotagents --where global
 
 ---
 
+## Git Handling (Tracking vs Ignoring)
+
+When target files are generated (`.claude/`, `.github/`, `.opencode/`, etc.), `agencos` asks how git should treat them:
+
+- **Track in repo (`--git track`)**: Keeps and commits them to git so teammates, CI, and cloud agents can use them.
+- **Untrack / Ignore shared (`--git ignore --scope shared`)**: Adds them to `.gitignore` so no one commits generated files.
+- **Untrack / Ignore locally (`--git ignore --scope local`)**: Adds them to `.git/info/exclude` (local only; keeps the repo diff clean).
+- **Untrack existing tracked files (`--git-untrack`)**: Automatically runs `git rm --cached` on files currently tracked in git if you choose to ignore them.
+- **Ignore directories (`--git-folders`)**: Ignores whole target directories (`/.claude/agents/`, etc.) instead of individual file entries.
+
+---
+
 ## Output Locations
 
 | Target      | Subagents                              | Skills                                | Instructions                          | MCP Config                          |

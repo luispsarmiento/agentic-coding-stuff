@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""harness - manage your AI agent harness (.agents/).
+"""agencos - manage your AI agent harness (.agents/).
 
 Commands:
   install     Fetch a harness (GitHub tarball or a local dir), drop its canonical
               .agents/ into the project/global scope and materialize it to tools.
   update      Re-fetch the recorded source and re-materialize, with drift backup.
-  uninstall   Remove the files the harness generated (and its ignore rules).
+  uninstall   Remove the files agencos generated (and its ignore rules).
   sync        Materialize the canonical .agents/ to the configured tools.
   migrate     Convert a legacy flat source (agents-src/*.md) into .agents/.
   status      Show the lock and any drift vs the generated files.
@@ -13,7 +13,7 @@ Commands:
   profile     List available profiles (<src>/profiles/<name>.json).
   bundle      Package .agents/ into a portable .dotagents archive.
 
-Run:  python harness.py <command> [options]
+Run:  python agencos.py <command> [options]
 """
 import argparse
 import datetime
@@ -378,8 +378,80 @@ def tool_rel_to(base: Path):
     return rel.as_posix()
 
 
+def ask_canonical_choice():
+    print("\nHow should git treat the canonical .agents/ folder (agents, skills, instructions)?")
+    print("  [t] track in repo       commit to git (teammates, CI and cloud agents get the full setup)  <- recommended")
+    print("  [s] ignore shared       ignore via .gitignore (shared rule, .agents/ stays on disk but untracked)")
+    print("  [l] ignore locally      ignore via .git/info/exclude (local to this machine only)")
+    print("  [k] skip                do not touch git settings for .agents/")
+    choices = {"t": ("track", None), "s": ("ignore", "shared"),
+               "l": ("ignore", "local"), "k": ("skip", None)}
+    while True:
+        try:
+            a = (input("Choice [t/s/l/k] (default t): ").strip().lower() or "t")[:1]
+        except (EOFError, KeyboardInterrupt):
+            print("\n[git] no input; tracking .agents/")
+            return "track", None
+        if a in choices:
+            return choices[a]
+        print("  please answer t, s, l or k")
+
+
+def handle_canonical_ignore(where: str, out: str, mode: str, scope: str, dry: bool):
+    """Handle git tracking or ignoring for the project's canonical .agents/ folder."""
+    if where == "global":
+        return
+    base = install_base(where, out)
+    if not (base / ".git").exists():
+        return
+    canon_dir = base / ".agents"
+    if not canon_dir.exists():
+        return
+
+    local_f = sync_agents.exclude_file(base, "local")
+    shared_f = sync_agents.exclude_file(base, "shared")
+
+    if mode == "skip":
+        return
+
+    if mode == "track":
+        sync_agents.set_tool_ignore(base, "local", None, dry)
+        # Remove any managed .agents/ line
+        for f in (local_f, shared_f):
+            if f.exists():
+                text = f.read_text(encoding="utf-8")
+                new_text = re.sub(r"# >>> agencos \(\.agents\) >>>\n.*?\n# <<< agencos \(\.agents\) <<<\n?", "", text, flags=re.S)
+                if new_text != text and not dry:
+                    f.write_text(new_text, encoding="utf-8")
+        return
+
+    if mode == "ignore":
+        target_f = shared_f if scope == "shared" else local_f
+        other_f = local_f if scope == "shared" else shared_f
+        marker_begin = "# >>> agencos (.agents) >>>"
+        marker_end = "# <<< agencos (.agents) <<<"
+        block = f"{marker_begin}\n/.agents/\n{marker_end}\n"
+
+        text = target_f.read_text(encoding="utf-8") if target_f.exists() else ""
+        if marker_begin not in text:
+            sep = "" if not text or text.endswith("\n") else "\n"
+            if not dry:
+                target_f.parent.mkdir(parents=True, exist_ok=True)
+                target_f.write_text(text + sep + block, encoding="utf-8")
+        
+        # Clean from other file
+        if other_f.exists():
+            otext = other_f.read_text(encoding="utf-8")
+            notext = re.sub(r"# >>> agencos \(\.agents\) >>>\n.*?\n# <<< agencos \(\.agents\) <<<\n?", "", otext, flags=re.S)
+            if notext != otext and not dry:
+                other_f.write_text(notext, encoding="utf-8")
+        
+        shown = ".gitignore" if scope == "shared" else ".git/info/exclude"
+        print(f"[git] '/.agents/' added to {shown} ({scope})")
+
+
 def handle_tool_ignore(where, out, mode, dry):
-    """Keep the harness tool folder out of git (default) or trackable."""
+    """Keep the agencos tool folder out of git (default) or trackable."""
     if where == "global":
         return
     base = install_base(where, out)
@@ -389,7 +461,7 @@ def handle_tool_ignore(where, out, mode, dry):
         changed = (sync_agents.set_tool_ignore(base, "local", None, dry)
                    or sync_agents.set_tool_ignore(base, "shared", None, dry))
         if changed:
-            print("[git] harness tool folder is now trackable (removed the ignore entry)")
+            print("[git] agencos tool folder is now trackable (removed the ignore entry)")
         return
     rel = tool_rel_to(base)
     if rel is None:
@@ -398,7 +470,7 @@ def handle_tool_ignore(where, out, mode, dry):
     sync_agents.set_tool_ignore(base, scope, rel, dry)
     shown = ".gitignore" if scope == "shared" else ".git/info/exclude"
     print(f"[git] '{rel}/' added to {shown} ({scope}) so it does not dirty the project.")
-    print("      to version it instead:  python harness.py sync --harness-ignore track")
+    print("      to version it instead:  python agencos.py sync --harness-ignore track")
 
 
 def sync_argv(canon: Path, args, agents=True):
@@ -417,6 +489,10 @@ def sync_argv(canon: Path, args, agents=True):
         argv += ["--git", args.git]
     if getattr(args, "scope", None):
         argv += ["--scope", args.scope]
+    if getattr(args, "git_untrack", None) is not None:
+        argv += ["--git-untrack"]
+    if getattr(args, "git_folders", False):
+        argv += ["--git-folders"]
     if getattr(args, "no_instructions", False):
         argv += ["--no-instructions"]
     if getattr(args, "no_mcp", False):
@@ -470,12 +546,27 @@ def cmd_sync(argv):
     if lock.get("where") in ("project", "root") and not is_dry(argv):
         handle_tool_ignore(lock["where"], lock.get("out", "."), harness_ignore, False)
         base = install_base(lock["where"], lock.get("out", "."))
+
+        # Check git handling for the canonical .agents/ folder
+        if (base / ".git").exists():
+            cfg = sync_agents.load_config(base / ".agents")
+            canon_mode = cfg.get("canonical_git")
+            canon_scope = cfg.get("canonical_scope", "shared")
+            if canon_mode is None:
+                if sys.stdin.isatty():
+                    canon_mode, canon_scope = ask_canonical_choice()
+                else:
+                    canon_mode = "track"
+            handle_canonical_ignore(lock["where"], lock.get("out", "."), canon_mode, canon_scope, False)
+            sync_agents.save_config(base / ".agents", canonical_git=canon_mode if canon_mode != "skip" else None,
+                                    canonical_scope=canon_scope if canon_mode != "skip" else None)
+
         print("[hint] Optional: store this project's graph/notes in user data: "
-              "run `harness memory init` (or re-run sync with --with-memory). "
+              "run `agencos memory init` (or re-run sync with --with-memory). "
               "The graph-init subagent is also available for in-repo graphs.")
         if with_memory:
             memory_init(base, None, False, False, True, False, False, False)
-    return rc
+    return rc if rc is not None else 0
 
 
 def detect_and_handle_existing_assets(target_base: Path, dest_canon: Path, args):
@@ -629,6 +720,20 @@ def cmd_install(args):
         sync_agents.set_lock_provenance(dest_canon, args.source, args.ref, args.path)
         handle_tool_ignore(where, args.out, args.harness_ignore, False)
         if where in ("project", "root"):
+            # Check git handling for the canonical .agents/ folder
+            if (base / ".git").exists():
+                cfg = sync_agents.load_config(base / ".agents")
+                canon_mode = getattr(args, "canonical_git", None) or cfg.get("canonical_git")
+                canon_scope = getattr(args, "canonical_scope", None) or cfg.get("canonical_scope", "shared")
+                if canon_mode is None:
+                    if sys.stdin.isatty():
+                        canon_mode, canon_scope = ask_canonical_choice()
+                    else:
+                        canon_mode = "track"
+                handle_canonical_ignore(where, args.out, canon_mode, canon_scope, False)
+                sync_agents.save_config(base / ".agents", canonical_git=canon_mode if canon_mode != "skip" else None,
+                                        canonical_scope=canon_scope if canon_mode != "skip" else None)
+
             print("[hint] Optional: store this project's graph/notes in user data: "
                   "run `agencos memory init` (or re-run install with --with-memory). "
                   "The graph-init subagent is also available for in-repo graphs.")
@@ -645,7 +750,7 @@ def cmd_update(args):
         sys.exit(f"error: no lock at {sync_agents.lock_path(src)} (nothing to update)")
     source = old.get("source")
     if not source:
-        sys.exit("error: lock has no source; install with: harness install <source>")
+        sys.exit("error: lock has no source; install with: agencos install <source>")
 
     ref = args.ref or old.get("ref")
     path = old.get("path", ".agents")
@@ -691,7 +796,7 @@ def cmd_update(args):
         handle_tool_ignore(where, out, args.harness_ignore, False)
         if where in ("project", "root"):
             print("[hint] Optional: store this project's graph/notes in user data: "
-                  "run `harness memory init` (or re-run with --with-memory).")
+                  "run `agencos memory init` (or re-run with --with-memory).")
             if getattr(args, "with_memory", False):
                 memory_init(base, None, False, getattr(args, "no_mcp", False),
                             True, False, False, False)
@@ -738,7 +843,7 @@ def cmd_status(args):
     src = Path(args.src)
     lock = sync_agents.load_lock(src)
     if not lock:
-        print(f"no lock at {sync_agents.lock_path(src)}; run: harness sync")
+        print(f"no lock at {sync_agents.lock_path(src)}; run: agencos sync")
         return 1
     base, rows = sync_agents.lock_status(lock)
     drift = [r for r in rows if r[2] != "ok"]
@@ -879,6 +984,14 @@ def add_materialize_args(p, include_ref=False, include_source=False):
                    help="how git treats the generated files")
     p.add_argument("--scope", choices=["local", "shared"], default=None,
                    help="with --git ignore: local=.git/info/exclude, shared=.gitignore")
+    p.add_argument("--git-untrack", action="store_true", default=None,
+                   help="if ignoring, automatically untrack files currently tracked in git (git rm --cached)")
+    p.add_argument("--git-folders", action="store_true", default=False,
+                   help="ignore whole target agent directories instead of individual files")
+    p.add_argument("--canonical-git", choices=["track", "ignore", "skip"], default=None,
+                   help="how git treats the canonical .agents/ folder: track or ignore")
+    p.add_argument("--canonical-scope", choices=["local", "shared"], default=None,
+                   help="with --canonical-git ignore: shared=.gitignore (default), local=.git/info/exclude")
     p.add_argument("--harness-ignore", choices=["local", "shared", "track"], default="local",
                    help="keep the harness tool folder out of git (default: local). "
                         "'track' makes it versionable")
@@ -1025,12 +1138,12 @@ def cmd_memory(argv):
     if argv and argv[0] == "--":
         argv = argv[1:]
     if not argv:
-        print("usage: harness memory <init|sync|status|hook|backup> [options]")
+        print("usage: agencos memory <init|sync|status|hook|backup> [options]")
         return 2
     sub = argv[0]
     rest = argv[1:]
     if sub == "init":
-        ap = argparse.ArgumentParser(prog="harness memory init")
+        ap = argparse.ArgumentParser(prog="agencos memory init")
         ap.add_argument("--root", default=None, help="override memory root")
         ap.add_argument("--project-id", default=None, help="override project id")
         ap.add_argument("--repo", default=".", help="repo root (default .)")
@@ -1052,7 +1165,7 @@ def cmd_memory(argv):
                     a.relocate_codegraph, a.full_graph)
         return 0
     if sub in ("sync", "reindex"):
-        ap = argparse.ArgumentParser(prog="harness memory sync")
+        ap = argparse.ArgumentParser(prog="agencos memory sync")
         ap.add_argument("--root", default=None)
         ap.add_argument("--repo", default=".")
         ap.add_argument("--quiet", action="store_true")
@@ -1087,7 +1200,7 @@ def cmd_memory(argv):
             print("[memory] sync done")
         return 0
     if sub == "status":
-        ap = argparse.ArgumentParser(prog="harness memory status")
+        ap = argparse.ArgumentParser(prog="agencos memory status")
         ap.add_argument("--repo", default=".")
         a = ap.parse_args(rest)
         repo = Path(a.repo).resolve()
@@ -1108,7 +1221,7 @@ def cmd_memory(argv):
         return 0
     if sub == "hook":
         if not rest or rest[0] not in ("install", "uninstall"):
-            print("usage: harness memory hook install|uninstall")
+            print("usage: agencos memory hook install|uninstall")
             return 2
         repo = Path(".").resolve()
         # find git root
@@ -1128,7 +1241,7 @@ def cmd_memory(argv):
         marker = "# >>> agent-memory sync >>>"
         end = "# <<< agent-memory sync <<<"
         block = (marker + "\n"
-                 "harness memory sync --quiet || true\n"
+                 "agencos memory sync --quiet || true\n"
                  + end + "\n")
         if rest[0] == "install":
             text = hook.read_text(encoding="utf-8") if hook.is_file() else "#!/bin/sh\n"

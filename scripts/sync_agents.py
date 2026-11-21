@@ -479,22 +479,22 @@ def doctor(src_root: Path, scripts_src: Path):
 
 
 def ask_choice(n_files: int):
-    print(f"\n{n_files} generated file(s). How should git treat them?")
-    print("  [t] track           commit them (teammates, CI and cloud agents get them)  <- recommended")
-    print("  [l] ignore locally  .git/info/exclude (no diff in the repo, only this machine)")
-    print("  [s] ignore shared   .gitignore (committed rule, nobody commits the outputs)")
-    print("  [k] skip            do not touch git settings")
-    choices = {"t": ("track", None), "l": ("ignore", "local"),
-               "s": ("ignore", "shared"), "k": ("skip", None)}
+    print(f"\n{n_files} generated file(s). How should git treat target agent files/folders?")
+    print("  [t] track in repo       commit them to git (teammates, CI and cloud agents get them)  <- recommended")
+    print("  [s] ignore shared       untrack/ignore via .gitignore (shared rule, nobody commits them)")
+    print("  [l] ignore locally      untrack/ignore via .git/info/exclude (local to this machine only)")
+    print("  [k] skip                do not touch git settings")
+    choices = {"t": ("track", None), "s": ("ignore", "shared"),
+               "l": ("ignore", "local"), "k": ("skip", None)}
     while True:
         try:
-            a = (input("Choice [t/l/s/k] (default t): ").strip().lower() or "t")[:1]
+            a = (input("Choice [t/s/l/k] (default t): ").strip().lower() or "t")[:1]
         except (EOFError, KeyboardInterrupt):
             print("\n[git] no input; skipping git handling")
             return "skip", None
         if a in choices:
             return choices[a]
-        print("  please answer t, l, s or k")
+        print("  please answer t, s, l or k")
 
 
 def resolve_git_choice(args, src_dir: Path, n_files: int):
@@ -516,9 +516,22 @@ def resolve_git_choice(args, src_dir: Path, n_files: int):
     return cfg["git"], scope, False
 
 
-def apply_git(mode: str, scope: str, generated, root: Path, dry: bool):
+def apply_git(mode: str, scope: str, generated, root: Path, dry: bool, untrack: bool = None, folders: bool = False):
     tag = "(dry-run) " if dry else ""
-    rels = ["/" + d.resolve().relative_to(root).as_posix() for d in generated]
+    if folders:
+        # compute unique parent directories relative to root
+        parent_dirs = set()
+        for d in generated:
+            try:
+                rel_p = d.resolve().parent.relative_to(root).as_posix()
+                if rel_p and rel_p != ".":
+                    parent_dirs.add("/" + rel_p + "/")
+            except ValueError:
+                pass
+        rels = sorted(parent_dirs)
+    else:
+        rels = ["/" + d.resolve().relative_to(root).as_posix() for d in generated]
+
     local_f, shared_f = exclude_file(root, "local"), exclude_file(root, "shared")
 
     if mode == "skip":
@@ -532,8 +545,7 @@ def apply_git(mode: str, scope: str, generated, root: Path, dry: bool):
         print("      remember to `git add` them so teammates and cloud agents see them")
         return
 
-    # mode == "ignore": exact file paths only, never whole directories, so
-    # hand-written agents in the same folders stay visible to git.
+    # mode == "ignore"
     chosen, other = (local_f, shared_f) if scope == "local" else (shared_f, local_f)
     existing = []
     if chosen.exists():
@@ -542,15 +554,39 @@ def apply_git(mode: str, scope: str, generated, root: Path, dry: bool):
     changed = update_block(chosen, entries, dry)
     update_block(other, [], dry)   # avoid a stale block in the other file
     shown = chosen.relative_to(root).as_posix() if chosen.is_relative_to(root) else str(chosen)
-    print(f"[git] {tag}ignoring {len(rels)} generated file(s) via {shown} ({scope})"
+    target_desc = f"{len(rels)} generated directory rule(s)" if folders else f"{len(rels)} generated file(s)"
+    print(f"[git] {tag}ignoring {target_desc} via {shown} ({scope})"
           + ("" if changed else " - already up to date"))
 
-    code, out = git(["ls-files", "--", *[r.lstrip("/") for r in rels]], root)
+    # Check if files are currently tracked in git
+    file_rels = [d.resolve().relative_to(root).as_posix() for d in generated]
+    code, out = git(["ls-files", "--", *file_rels], root)
     if code == 0 and out:
-        print("[git] WARNING: these are already tracked; ignore rules do not untrack them:")
-        for line in out.splitlines():
-            print(f"        {line}")
-        print("      to stop tracking (not run): git rm --cached <file>")
+        tracked_files = [l.strip() for l in out.splitlines() if l.strip()]
+        if tracked_files:
+            print(f"[git] Notice: {len(tracked_files)} target file(s) are currently tracked in git.")
+            should_untrack = untrack
+            if should_untrack is None:
+                if sys.stdin.isatty() and not dry:
+                    try:
+                        ans = input("      Untrack them from git index (git rm --cached)? [y/N]: ").strip().lower()
+                        should_untrack = (ans == "y")
+                    except (EOFError, KeyboardInterrupt):
+                        should_untrack = False
+                else:
+                    should_untrack = False
+            
+            if should_untrack:
+                if not dry:
+                    code_rm, rm_out = git(["rm", "--cached", "-f", "--", *tracked_files], root)
+                    if code_rm == 0:
+                        print(f"[git] Untracked {len(tracked_files)} file(s) from git index (kept on disk).")
+                    else:
+                        print(f"[git] git rm --cached output: {rm_out}")
+                else:
+                    print(f"[git] (dry-run) would untrack {len(tracked_files)} file(s) from git index.")
+            else:
+                print("      to stop tracking manually: git rm --cached <files>")
 
 
 # --------------------------------------------------------------------------- #
@@ -730,6 +766,10 @@ def run(argv=None):
                         "else ask (interactive) or skip (non-interactive)")
     p.add_argument("--scope", choices=["local", "shared"], default=None,
                    help="with --git ignore: local=.git/info/exclude, shared=.gitignore (default: local)")
+    p.add_argument("--git-untrack", action="store_true", default=None,
+                   help="if ignoring, automatically untrack files currently tracked in git (git rm --cached)")
+    p.add_argument("--git-folders", action="store_true", default=False,
+                   help="ignore whole target agent directories instead of individual files")
     p.add_argument("--agents", nargs="+", metavar="NAME",
                    help="sync only these subagents by name (non-interactive)")
     p.add_argument("--skills", nargs="+", metavar="NAME",
@@ -938,7 +978,7 @@ def run(argv=None):
         print("[git] output folder is not inside a git repo; nothing to configure")
         return
     mode, scope, saveable = resolve_git_choice(args, src_root, len(generated))
-    apply_git(mode, scope, generated, repo_root, args.dry_run)
+    apply_git(mode, scope, generated, repo_root, args.dry_run, untrack=args.git_untrack, folders=args.git_folders)
     if not args.dry_run:
         save_config(src_root,
                     where=where if save_where else None,

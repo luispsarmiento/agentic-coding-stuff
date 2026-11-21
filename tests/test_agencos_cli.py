@@ -162,5 +162,46 @@ class AgencosCliTests(unittest.TestCase):
         self.assertTrue((self.repo / ".agents" / "memories").is_dir())
 
 
+    def test_git_ignore_shared_and_local(self):
+        """Test git ignore options: shared (.gitignore) vs local (.git/info/exclude)."""
+        import subprocess
+        subprocess.run(["git", "init"], cwd=self.repo, check=True, capture_output=True)
+
+        # 1. Install with shared ignore
+        args_shared = [
+            "install", str(self.src), "-o", str(self.repo),
+            "--where", "project", "-t", "claude",
+            "--git", "ignore", "--scope", "shared"
+        ]
+        rc = agencos.main(args_shared)
+        self.assertEqual(rc, 0)
+        gitignore = self.repo / ".gitignore"
+        self.assertTrue(gitignore.is_file())
+        self.assertIn("/.claude/agents/agent-a.md", gitignore.read_text(encoding="utf-8"))
+
+        # 2. Re-sync with local ignore
+        args_local = [
+            "sync", "-s", str(self.repo / ".agents"), "-o", str(self.repo),
+            "--where", "project", "-t", "claude",
+            "--git", "ignore", "--scope", "local"
+        ]
+        rc = agencos.main(args_local)
+        self.assertEqual(rc, 0)
+        exclude = self.repo / ".git" / "info" / "exclude"
+        self.assertTrue(exclude.is_file())
+        self.assertIn("/.claude/agents/agent-a.md", exclude.read_text(encoding="utf-8"))
+
+        # 3. Track in repo removes ignore blocks
+        args_track = [
+            "sync", "-s", str(self.repo / ".agents"), "-o", str(self.repo),
+            "--where", "project", "-t", "claude",
+            "--git", "track"
+        ]
+        rc = agencos.main(args_track)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("agents-sync (generated files)", gitignore.read_text(encoding="utf-8"))
+        self.assertNotIn("agents-sync (generated files)", exclude.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
