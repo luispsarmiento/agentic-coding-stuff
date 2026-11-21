@@ -599,6 +599,26 @@ def select_agents(agents):
     return picked
 
 
+def select_skills(skills):
+    """Interactively ask whether to sync all skills or just some."""
+    if not sys.stdin.isatty():
+        print("[select] not interactive; syncing all skills (use --skills to pick)")
+        return list(skills)
+    print("\nSelect skill(s) to sync:")
+    print("  [a] all skills")
+    for i, s in enumerate(skills, 1):
+        print(f"  [{i}] {s.id}")
+    try:
+        choice = input("\nEnter choice (a, 1, 1,3, 1-3 or a name) [a]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[select] no input; syncing all skills")
+        return list(skills)
+    picked = parse_selection(choice, skills)
+    if not picked:
+        sys.exit("error: no skills selected")
+    return picked
+
+
 def dest_for(target: str, name: str, where: str, out_root: Path, repo_root):
     """Resolve the agent file path for one target at the chosen scope."""
     if where == "global":
@@ -710,16 +730,14 @@ def run(argv=None):
                         "else ask (interactive) or skip (non-interactive)")
     p.add_argument("--scope", choices=["local", "shared"], default=None,
                    help="with --git ignore: local=.git/info/exclude, shared=.gitignore (default: local)")
-    group = p.add_mutually_exclusive_group()
-    group.add_argument("--agents", nargs="+", metavar="NAME",
-                       help="sync only these subagents by name (non-interactive)")
-    group.add_argument("--all", action="store_true",
-                       help="sync every subagent and skill without prompting")
-    group.add_argument("--select", action="store_true",
-                       help="force the interactive subagent picker "
-                            "(default when no selection flag is given)")
+    p.add_argument("--agents", nargs="+", metavar="NAME",
+                   help="sync only these subagents by name (non-interactive)")
     p.add_argument("--skills", nargs="+", metavar="NAME",
                    help="sync only these skills by name (non-interactive)")
+    p.add_argument("--all", action="store_true",
+                   help="sync every subagent and skill without prompting")
+    p.add_argument("--select", action="store_true",
+                   help="force the interactive picker")
     p.add_argument("--no-instructions", action="store_true",
                    help="do not write AGENTS.md as per-tool instruction files")
     p.add_argument("--no-mcp", action="store_true",
@@ -753,22 +771,25 @@ def run(argv=None):
     cli_selection = args.all or args.agents is not None or args.skills is not None
     if args.all:
         agents, skills = all_agents, all_skills
-    elif args.agents is not None:
-        agents = pick(all_agents, args.agents)
-        if not agents:
-            sys.exit(f"error: no matching subagents found from: {', '.join(args.agents)}")
-        skills = pick(all_skills, args.skills) if args.skills is not None else []
-    elif args.skills is not None:
-        agents = []
-        skills = pick(all_skills, args.skills)
-        if not skills:
-            sys.exit(f"error: no matching skills found from: {', '.join(args.skills)}")
+    elif args.agents is not None or args.skills is not None:
+        if args.agents is not None:
+            agents = pick(all_agents, args.agents)
+            if not agents and all_agents:
+                sys.exit(f"error: no matching subagents found from: {', '.join(args.agents)}")
+        else:
+            agents = []
+        if args.skills is not None:
+            skills = pick(all_skills, args.skills)
+            if not skills and all_skills:
+                sys.exit(f"error: no matching skills found from: {', '.join(args.skills)}")
+        else:
+            skills = []
     elif not cli_selection and (prof.get("agents") is not None or prof.get("skills") is not None):
         agents = pick(all_agents, prof.get("agents"))
         skills = pick(all_skills, prof.get("skills"))
     else:
         agents = select_agents(all_agents) if all_agents else []
-        skills = all_skills
+        skills = select_skills(all_skills) if all_skills else []
 
     where, save_where = resolve_where(args, src_root)
     repo_root = git_root(out_root)
@@ -860,9 +881,26 @@ def run(argv=None):
         inst = src_root / "AGENTS.md"
         if not inst.is_file():
             inst = src_root / "agents.md"
+        if not inst.is_file():
+            inst = skill_base(where, out_root, repo_root) / "AGENTS.md"
+            if not inst.is_file():
+                inst = skill_base(where, out_root, repo_root) / "agents.md"
+
         if inst.is_file():
             text = f"<!-- GENERATED from {inst.name}. Do not edit. -->\n" \
                    + inst.read_text(encoding="utf-8")
+            
+            # If DESIGN.md exists in canonical or repo root, include or reference it
+            design_file = src_root / "DESIGN.md"
+            if not design_file.is_file():
+                design_file = skill_base(where, out_root, repo_root) / "DESIGN.md"
+            if design_file.is_file():
+                try:
+                    design_content = design_file.read_text(encoding="utf-8")
+                    text += "\n\n<!-- DESIGN.md (integrated) -->\n" + design_content
+                except OSError:
+                    pass
+
             for t in targets:
                 tmpl = (INSTRUCTION_TARGETS.get(t) or {}).get(
                     "global" if where == "global" else "path")

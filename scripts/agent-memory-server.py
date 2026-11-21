@@ -94,13 +94,23 @@ def do_memory_search(args: dict) -> dict:
         return text_result("query is required", True)
     base = memory_dir()
     targets = []
-    for sub in ("notes", "specs"):
+    # Scan notes, specs, graph, and global lessons
+    for sub in ("notes", "specs", "graph"):
         d = base / sub
         if d.is_dir():
             targets.append(d)
-    graph_report = base / "graph" / "GRAPH_REPORT.md"
-    if graph_report.is_file():
-        targets.append(graph_report.parent)
+    global_lessons = Path(ROOT) / "_global" / "lessons"
+    if global_lessons.is_dir():
+        targets.append(global_lessons)
+
+    # Also search project repository specs if configured/present
+    meta = load_project_meta()
+    repo_path = meta.get("repo_path")
+    if repo_path:
+        repo_specs = Path(repo_path) / "specs"
+        if repo_specs.is_dir() and repo_specs != (base / "specs"):
+            targets.append(repo_specs)
+
     hits = []
     rx = re.compile(re.escape(query), re.IGNORECASE)
     for d in targets:
@@ -108,13 +118,25 @@ def do_memory_search(args: dict) -> dict:
         for f in files:
             if not f.is_file():
                 continue
+            # Search text files, markdown, json, etc.
+            if f.suffix not in (".md", ".txt", ".json", ".yaml", ".yml", ""):
+                continue
             try:
+                # For json graphs, check if it's graph.json and do structured extract if wanted,
+                # or read lines directly
                 lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
                 continue
             for i, line in enumerate(lines, 1):
                 if rx.search(line):
-                    rel = f.relative_to(base).as_posix() if f.is_relative_to(base) else str(f)
+                    if f.is_relative_to(base):
+                        rel = f.relative_to(base).as_posix()
+                    elif f.is_relative_to(Path(ROOT)):
+                        rel = f.relative_to(Path(ROOT)).as_posix()
+                    elif repo_path and f.is_relative_to(Path(repo_path)):
+                        rel = f"[repo]/" + f.relative_to(Path(repo_path)).as_posix()
+                    else:
+                        rel = str(f)
                     hits.append(f"{rel}:{i}: {line.strip()}")
                     if len(hits) >= limit:
                         break
@@ -164,20 +186,32 @@ def do_spec_get(args: dict) -> dict:
     if not name:
         return text_result("name is required", True)
     specs = memory_dir() / "specs"
-    if not specs.is_dir():
-        return text_result("No specs directory.")
-    p = specs / name
-    if p.is_file():
-        return text_result(p.read_text(encoding="utf-8", errors="replace"))
-    candidates = [f for f in specs.rglob("*") if f.is_file()]
+    candidates = []
+    if specs.is_dir():
+        p = specs / name
+        if p.is_file():
+            return text_result(p.read_text(encoding="utf-8", errors="replace"))
+        candidates.extend([f for f in specs.rglob("*") if f.is_file()])
+
+    meta = load_project_meta()
+    repo = meta.get("repo_path")
+    if repo:
+        repo_specs = Path(repo) / "specs"
+        if repo_specs.is_dir() and repo_specs != specs:
+            p = repo_specs / name
+            if p.is_file():
+                return text_result(p.read_text(encoding="utf-8", errors="replace"))
+            candidates.extend([f for f in repo_specs.rglob("*") if f.is_file()])
+
+    if not candidates:
+        return text_result(f"No specs found in memory or project for: {name}")
+
     matches = [f for f in candidates if name.lower() in f.name.lower()]
     if not matches:
         matches = candidates
-    if not matches:
-        return text_result(f"Spec not found: {name}")
     if len(matches) == 1:
         return text_result(matches[0].read_text(encoding="utf-8", errors="replace"))
-    listing = "\n".join(str(f.relative_to(specs)) for f in matches)
+    listing = "\n".join(str(f.name) for f in matches[:10])
     return text_result(f"Multiple matches:\n{listing}\nUse a more specific name.")
 
 

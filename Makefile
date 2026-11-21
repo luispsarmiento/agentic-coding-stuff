@@ -1,38 +1,38 @@
 migrate:
-	python harness.py migrate
+	python agencos.py migrate
 
 sync:
-	python harness.py sync --all
+	python agencos.py sync --all
 
 sync-select:
-	python harness.py sync --select
+	python agencos.py sync --select
 
 sync-global:
-	python harness.py sync --all --where global
+	python agencos.py sync --all --where global
 
 sync-claude:
-	python harness.py sync -t claude
+	python agencos.py sync -t claude
 
 sync-track:
-	python harness.py sync --git track
+	python agencos.py sync --git track
 
 sync-ignore:
-	python harness.py sync --git ignore
+	python agencos.py sync --git ignore
 
 sync-dry:
-	python harness.py sync -n
+	python agencos.py sync -n
 
 status:
-	python harness.py status
+	python agencos.py status
 
 doctor:
-	python harness.py doctor
+	python agencos.py doctor
 
 profile:
-	python harness.py profile
+	python agencos.py profile
 
 bundle:
-	python harness.py bundle
+	python agencos.py bundle
 
 clean:
 	rm -rf .claude/agents .github/agents .opencode/agents .agents/skills

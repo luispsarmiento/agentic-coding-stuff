@@ -17,9 +17,9 @@ The agent is the muscle; the spec is the brain. The human acts as architect and 
 
 ## Step 0 - Detect where the user is
 
-Check the repo before doing anything:
-
-- No `specs/` (or equivalent) folder -> **Phase A: Constitution**.
+Check the repo and memory configuration before doing anything:
+- **Spec Directory Location**: Check `.agent-profile.json` or query the `memory` MCP tool. If agent-memory is configured, project specs live in `~/agent-memory/<project-id>/specs/` (or the configured memory root `specs/`) to avoid cluttering the repository root unless explicitly asked to store in-repo. If no memory server is configured, default to `specs/` in the project.
+- No `specs/` (or memory specs equivalent) folder -> **Phase A: Constitution**.
 - Constitution exists, user wants a new feature -> **Phase B: Feature loop**.
 - Feature just merged, or global decisions changed -> **Phase C: Replan**.
 - Existing code but no specs (brownfield) -> **Phase A, reverse-engineer mode**.

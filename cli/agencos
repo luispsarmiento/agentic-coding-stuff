@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# Launcher so `agencos` can be run from anywhere.
+# Add this `cli/` directory to your PATH (and `chmod +x cli/agencos` on Unix).
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+exec python3 "$ROOT/agencos.py" "$@"
