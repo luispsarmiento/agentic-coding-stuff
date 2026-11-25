@@ -569,8 +569,83 @@ def cmd_sync(argv):
     return rc if rc is not None else 0
 
 
+def detect_and_migrate_external_agents(target_base: Path, dest_canon: Path, is_interactive: bool = False):
+    """Detect and automatically migrate existing subagents and skills from
+    other coding tools (.claude/, .github/, .opencode/) into canonical .agents/."""
+    migrated_agents = []
+    migrated_skills = []
+    dest_agents = dest_canon / "agents"
+    dest_skills = dest_canon / "skills"
+
+    # 1. Claude Code: .claude/agents/*.md
+    claude_agents = target_base / ".claude" / "agents"
+    if claude_agents.is_dir():
+        for f in claude_agents.glob("*.md"):
+            agent_id = f.stem
+            out_dir = dest_agents / agent_id
+            if not (out_dir / "agent.md").is_file():
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_dir.joinpath("agent.md").write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
+                migrated_agents.append((agent_id, f))
+
+    # 2. GitHub Copilot: .github/agents/*.agent.md or .copilot/agents/*.agent.md
+    for copilot_dir in (target_base / ".github" / "agents", target_base / ".copilot" / "agents"):
+        if copilot_dir.is_dir():
+            for f in copilot_dir.glob("*.agent.md"):
+                agent_id = f.name[:-len(".agent.md")]
+                out_dir = dest_agents / agent_id
+                if not (out_dir / "agent.md").is_file():
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    out_dir.joinpath("agent.md").write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
+                    migrated_agents.append((agent_id, f))
+
+    # 3. OpenCode: .opencode/agents/*.md
+    opencode_agents = target_base / ".opencode" / "agents"
+    if opencode_agents.is_dir():
+        for f in opencode_agents.glob("*.md"):
+            agent_id = f.stem
+            out_dir = dest_agents / agent_id
+            if not (out_dir / "agent.md").is_file():
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_dir.joinpath("agent.md").write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
+                migrated_agents.append((agent_id, f))
+
+    # 4. Detect external skills: .claude/skills/*, .github/skills/*, .opencode/skills/*
+    for sk_parent in (target_base / ".claude" / "skills",
+                      target_base / ".github" / "skills",
+                      target_base / ".opencode" / "skills"):
+        if sk_parent.is_dir():
+            for sk in sk_parent.iterdir():
+                if sk.is_dir() and (sk / "SKILL.md").is_file():
+                    dest_sk = dest_skills / sk.name
+                    if not (dest_sk / "SKILL.md").is_file():
+                        copy_tree(sk, dest_sk)
+                        migrated_skills.append((sk.name, sk))
+
+    if migrated_agents or migrated_skills:
+        print(f"[migrate] Auto-detected existing agentic assets in {target_base}:")
+        for aid, src in migrated_agents:
+            print(f"  agent: {aid} (from {src}) -> .agents/agents/{aid}/agent.md")
+        for sid, src in migrated_skills:
+            print(f"  skill: {sid} (from {src}) -> .agents/skills/{sid}/")
+        # Save a migrated profile
+        prof_dir = dest_canon / "profiles"
+        prof_dir.mkdir(parents=True, exist_ok=True)
+        migrated_prof = prof_dir / "migrated.json"
+        if not migrated_prof.is_file():
+            prof_data = {
+                "agents": [a[0] for a in migrated_agents] or "all",
+                "skills": [s[0] for s in migrated_skills] or "all",
+                "targets": "all",
+                "instructions": True,
+                "mcp": True
+            }
+            migrated_prof.write_text(json.dumps(prof_data, indent=2) + "\n", encoding="utf-8")
+            print(f"[migrate] Created profile {migrated_prof}")
+
+
 def detect_and_handle_existing_assets(target_base: Path, dest_canon: Path, args):
-    """Detect pre-existing AGENTS.md, DESIGN.md, and local specs/memories.
+    """Detect pre-existing AGENTS.md, DESIGN.md, local specs/memories, and external agents.
     Prompt or migrate as requested."""
     is_interactive = sys.stdin.isatty() and not getattr(args, "dry_run", False)
 
@@ -713,6 +788,29 @@ def cmd_install(args):
 
     # Import user custom assets if specified
     import_custom_assets(dest_canon, args)
+
+    # Post-copy external asset migration (preserves existing local tool-specific agents/skills)
+    if where in ("project", "root"):
+        detect_and_migrate_external_agents(base, dest_canon, sys.stdin.isatty() and not getattr(args, "dry_run", False))
+
+    # Target selection: if --target was not specified, check saved config or prompt if interactive
+    if getattr(args, "target", None) is None:
+        cfg = sync_agents.load_config(dest_canon)
+        if cfg.get("targets"):
+            args.target = cfg["targets"]
+        elif sys.stdin.isatty() and not getattr(args, "dry_run", False):
+            detected_targets = []
+            if (base / ".claude").is_dir():
+                detected_targets.append("claude")
+            if (base / ".github").is_dir() or (base / ".copilot").is_dir():
+                detected_targets.append("copilot")
+            if (base / ".opencode").is_dir():
+                detected_targets.append("opencode")
+            if (base / ".agents").is_dir():
+                detected_targets.append("antigravity")
+            chosen = sync_agents.ask_targets(sync_agents.ALL_TARGETS, detected_targets)
+            args.target = chosen
+            sync_agents.save_config(dest_canon, targets=chosen)
 
     rc = sync_agents.run(sync_argv(dest_canon, args))
     if not args.dry_run:

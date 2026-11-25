@@ -655,6 +655,45 @@ def select_skills(skills):
     return picked
 
 
+def ask_targets(available_targets=None, preselected=None):
+    """Interactively ask which target agentic coding platforms to configure."""
+    targets_pool = available_targets or ALL_TARGETS
+    if not sys.stdin.isatty():
+        return list(targets_pool)
+    print("\nSelect target agentic coding platform(s) to configure:")
+    print("  [a] all platforms")
+    labels = {
+        "antigravity": "Antigravity (IDE & agy CLI)",
+        "claude": "Claude Code",
+        "copilot": "GitHub Copilot",
+        "opencode": "OpenCode",
+    }
+    for i, t in enumerate(targets_pool, 1):
+        desc = labels.get(t, t)
+        marker = " (detected)" if preselected and t in preselected else ""
+        print(f"  [{i}] {desc}{marker}")
+    default_choice = "a"
+    try:
+        choice = input(f"\nEnter choice (a, 1, 1,2, or target names) [{default_choice}]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[select] no input; configuring all platforms")
+        return list(targets_pool)
+    if not choice or choice == "a":
+        return list(targets_pool)
+    picked = []
+    for part in choice.replace(" ", "").split(","):
+        if not part:
+            continue
+        if part in targets_pool:
+            picked.append(part)
+        elif part.isdigit():
+            idx = int(part) - 1
+            if 0 <= idx < len(targets_pool):
+                picked.append(targets_pool[idx])
+    res = [t for t in targets_pool if t in picked]
+    return res if res else list(targets_pool)
+
+
 def dest_for(target: str, name: str, where: str, out_root: Path, repo_root):
     """Resolve the agent file path for one target at the chosen scope."""
     if where == "global":
@@ -790,10 +829,13 @@ def run(argv=None):
     scripts_src = Path(args.scripts_src)
     prof = load_profile(src_root, args.profile) if args.profile else {}
 
+    cfg = load_config(src_root)
     if "all" not in args.target:
         targets = args.target
     elif prof.get("targets"):
         targets = prof["targets"]
+    elif cfg.get("targets"):
+        targets = cfg["targets"]
     else:
         targets = list(ALL_TARGETS)
 

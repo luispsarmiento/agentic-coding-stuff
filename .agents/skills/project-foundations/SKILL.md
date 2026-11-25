@@ -21,12 +21,48 @@ Establish concise, evidence-based foundations for coding agents working in a pro
 
 ## Content Guidelines
 
-- Keep `.agents/agents.md` short and broadly applicable. Avoid duplicating generic agent behavior already supplied by the harness.
+- Keep `.agents/agents.md` short, actionable, and structured.
+- **Agent Memory Protocol (Mandatory First Step)**: Always instruct agents to consult `agent-memory` before all tasks, before making changes, and to record lessons after making changes.
+- **Working Agreement**: Outline verifiable rules, minimal refactoring boundaries, and exact test execution commands.
+- **Skills to load**: Provide an evidence-based roster of skills relevant to the project's technology and workflow.
 - Add a memory only when it captures a stable, useful project fact. Use descriptive filenames and keep each note focused.
 - Record exact commands only when verified from repository configuration, scripts, or documentation.
 - Prefer references to source paths over copied explanations or duplicated documentation.
 - Omit sections without evidence instead of filling a template with assumptions.
 - Keep transient task notes in the current conversation, not project memory.
+
+### Standard Template for `.agents/agents.md`
+
+When creating or augmenting `.agents/agents.md`, follow this layout tailored with verified project facts:
+
+```markdown
+---
+kind: agents
+---
+
+# [Project Name] Agent Guidelines
+
+The authoritative project instructions live in the repository-root `AGENTS.md` (AGENTS.md standard).
+Read it first. This file only adds agent-runtime notes.
+
+## Agent Memory Protocol
+- **Always check agent-memory first**: Query the project memory (`memory_search`, `graph_query`, notes, and specs) before planning or executing any task to inspect past decisions, lessons, and codebase maps.
+- **Memory before and after changes**: Consult memory *before* making any change, and persist new architectural discoveries, ADRs, or lessons into memory *after* completing changes.
+- **Never skip or bypass memory**: Always keep memory in the loop across all sessions.
+
+## Working agreement
+- Plan before coding on any change touching more than one module: state files to change, the port(s) involved, and the tests to add.
+- Prefer the smallest change that satisfies the requirement. Do not refactor unrelated code.
+- Run `<verified test/check command>` after each logical change and report the result honestly, including failures.
+- If a requirement conflicts with an architecture rule in AGENTS.md, stop and propose an ADR instead of bending the rule.
+- Never invent library APIs: read the installed package source or docs before using an unfamiliar API.
+
+## Skills to load
+- Architecture decisions & spec management: `spec-driven-development`
+- Reviewing code quality & conventions before commits: `code-reviewer`
+- Writing automated test coverage: `test-writer`
+- Code graph & memory initialization: `graph-init`
+```
 
 ## Boundaries
 

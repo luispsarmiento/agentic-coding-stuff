@@ -202,6 +202,56 @@ class AgencosCliTests(unittest.TestCase):
         self.assertNotIn("agents-sync (generated files)", gitignore.read_text(encoding="utf-8"))
         self.assertNotIn("agents-sync (generated files)", exclude.read_text(encoding="utf-8"))
 
+    def test_auto_migrate_external_agents(self):
+        """Test that existing .claude/ and .github/ agents are auto-migrated into canonical .agents/."""
+        # Create an existing agent in .claude/agents/
+        claude_agents = self.repo / ".claude" / "agents"
+        claude_agents.mkdir(parents=True)
+        (claude_agents / "legacy-helper.md").write_text(
+            "---\nname: legacy-helper\ndescription: A legacy helper\n---\nHelp user with tasks.\n",
+            encoding="utf-8"
+        )
+
+        args = [
+            "install", str(self.src), "-o", str(self.repo),
+            "--where", "project", "-t", "claude",
+            "--git", "skip"
+        ]
+        rc = agencos.main(args)
+        self.assertEqual(rc, 0)
+
+        # Verify that legacy-helper was migrated to .agents/agents/legacy-helper/agent.md
+        migrated_agent = self.repo / ".agents" / "agents" / "legacy-helper" / "agent.md"
+        self.assertTrue(migrated_agent.is_file())
+        self.assertIn("A legacy helper", migrated_agent.read_text(encoding="utf-8"))
+
+        # Verify migrated profile was created
+        migrated_prof = self.repo / ".agents" / "profiles" / "migrated.json"
+        self.assertTrue(migrated_prof.is_file())
+
+    def test_target_persistence_in_sync_config(self):
+        """Test that target choices are saved in .sync.json and honored in future runs."""
+        from unittest.mock import patch
+        import scripts.sync_agents as sa
+
+        # Simulate user choosing targets by number: 1 (claude) and 4 (antigravity)
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", return_value="1,4"):
+            args = [
+                "install", str(self.src), "-o", str(self.repo),
+                "--where", "project",
+                "--git", "skip"
+            ]
+            rc = agencos.main(args)
+            self.assertEqual(rc, 0)
+
+        cfg_file = self.repo / ".agents" / ".sync.json"
+        self.assertTrue(cfg_file.is_file())
+        cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+        self.assertIn("antigravity", cfg.get("targets", []))
+        self.assertIn("claude", cfg.get("targets", []))
+        self.assertNotIn("opencode", cfg.get("targets", []))
+
 
 if __name__ == "__main__":
     unittest.main()
